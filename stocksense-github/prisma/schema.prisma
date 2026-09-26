@@ -1,0 +1,310 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  INVENTORY_MANAGER
+  WAREHOUSE_STAFF
+}
+
+enum OperationType {
+  RECEIPT
+  DELIVERY
+  TRANSFER_OUT
+  TRANSFER_IN
+  ADJUSTMENT
+}
+
+enum DocumentStatus {
+  DRAFT
+  WAITING
+  READY
+  DONE
+  CANCELLED
+}
+
+enum AdjustmentReason {
+  DAMAGED
+  LOST
+  FOUND
+  COUNTING_ERROR
+  EXPIRED
+  OTHER
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  name         String
+  passwordHash String
+  role         Role          @default(WAREHOUSE_STAFF)
+  phone        String?
+  otpSecret    String?
+  otpExpiresAt DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  receipts     Receipt[]
+  deliveries   Delivery[]
+  transfers    Transfer[]
+  adjustments  StockAdjustment[]
+  ledgerLogs   StockLedger[]
+  notifications Notification[]
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  description String?
+  products    Product[]
+  createdAt   DateTime  @default(now())
+}
+
+model Unit {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  symbol    String    @unique
+  products  Product[]
+}
+
+model Product {
+  id              String         @id @default(uuid())
+  sku             String         @unique
+  name            String
+  description     String?
+  categoryId      String
+  category        Category       @relation(fields: [categoryId], references: [id])
+  unitId          String
+  unit            Unit           @relation(fields: [unitId], references: [id])
+  reorderLevel    Float          @default(10)
+  reorderQuantity Float          @default(50)
+  preferredWarehouseId String?
+  preferredWarehouse   Warehouse? @relation("PreferredWarehouse", fields: [preferredWarehouseId], references: [id])
+  status          String         @default("ACTIVE")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  stockBalances   StockBalance[]
+  ledgerEntries   StockLedger[]
+  receiptItems    ReceiptItem[]
+  deliveryItems   DeliveryItem[]
+  transferItems   TransferItem[]
+  adjustments     StockAdjustment[]
+  reorderRules    ReorderRule[]
+
+  @@index([sku])
+  @@index([categoryId])
+  @@index([status])
+}
+
+model Warehouse {
+  id          String         @id @default(uuid())
+  code        String         @unique
+  name        String
+  address     String?
+  locations   Location[]
+  products    Product[]      @relation("PreferredWarehouse")
+  sourceTransfers Transfer[] @relation("SourceWarehouse")
+  destTransfers   Transfer[] @relation("DestWarehouse")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model Location {
+  id          String         @id @default(uuid())
+  warehouseId String
+  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  code        String
+  name        String
+  type        String         @default("STORAGE")
+  createdAt   DateTime       @default(now())
+
+  stockBalances StockBalance[]
+  sourceTransfers Transfer[] @relation("SourceLocation")
+  destTransfers   Transfer[] @relation("DestLocation")
+  adjustments   StockAdjustment[]
+
+  @@unique([warehouseId, code])
+}
+
+model StockBalance {
+  id          String    @id @default(uuid())
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  locationId  String
+  location    Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  quantity    Float     @default(0)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([productId, locationId])
+  @@index([productId])
+  @@index([locationId])
+}
+
+model StockLedger {
+  id              String        @id @default(uuid())
+  timestamp       DateTime      @default(now())
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  operationType   OperationType
+  documentRef     String
+  quantityChange  Float
+  previousQuantity Float
+  newQuantity     Float
+  sourceLocation  String?
+  destLocation    String?
+  reason          String?
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+
+  @@index([productId])
+  @@index([timestamp])
+  @@index([operationType])
+  @@index([documentRef])
+}
+
+model Supplier {
+  id        String    @id @default(uuid())
+  name      String
+  code      String    @unique
+  email     String?
+  phone     String?
+  receipts  Receipt[]
+  createdAt DateTime  @default(now())
+}
+
+model Receipt {
+  id           String         @id @default(uuid())
+  receiptNumber String        @unique
+  supplierId   String
+  supplier     Supplier       @relation(fields: [supplierId], references: [id])
+  destinationLocationId String
+  status       DocumentStatus @default(DRAFT)
+  notes        String?
+  createdById  String
+  createdBy    User           @relation(fields: [createdById], references: [id])
+  validatedAt  DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  items        ReceiptItem[]
+
+  @@index([status])
+  @@index([receiptNumber])
+}
+
+model ReceiptItem {
+  id         String   @id @default(uuid())
+  receiptId  String
+  receipt    Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  quantity   Float
+}
+
+model Delivery {
+  id             String         @id @default(uuid())
+  deliveryNumber String         @unique
+  customerName   String
+  status         DocumentStatus @default(DRAFT)
+  picked         Boolean        @default(false)
+  packed         Boolean        @default(false)
+  notes          String?
+  createdById    String
+  createdBy      User           @relation(fields: [createdById], references: [id])
+  validatedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  items          DeliveryItem[]
+
+  @@index([status])
+  @@index([deliveryNumber])
+}
+
+model DeliveryItem {
+  id          String   @id @default(uuid())
+  deliveryId  String
+  delivery    Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  quantity    Float
+}
+
+model Transfer {
+  id             String         @id @default(uuid())
+  transferNumber String         @unique
+  sourceWarehouseId String
+  sourceWarehouse   Warehouse   @relation("SourceWarehouse", fields: [sourceWarehouseId], references: [id])
+  sourceLocationId  String
+  sourceLocation    Location    @relation("SourceLocation", fields: [sourceLocationId], references: [id])
+  destWarehouseId   String
+  destWarehouse     Warehouse   @relation("DestWarehouse", fields: [destWarehouseId], references: [id])
+  destLocationId    String
+  destLocation      Location    @relation("DestLocation", fields: [destLocationId], references: [id])
+  status         DocumentStatus @default(DRAFT)
+  createdById    String
+  createdBy      User           @relation(fields: [createdById], references: [id])
+  validatedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  items          TransferItem[]
+
+  @@index([status])
+}
+
+model TransferItem {
+  id         String   @id @default(uuid())
+  transferId String
+  transfer   Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  quantity   Float
+}
+
+model StockAdjustment {
+  id               String           @id @default(uuid())
+  adjustmentNumber String           @unique
+  productId        String
+  product          Product          @relation(fields: [productId], references: [id])
+  locationId       String
+  location         Location         @relation(fields: [locationId], references: [id])
+  systemQuantity   Float
+  physicalQuantity Float
+  difference       Float
+  reason           AdjustmentReason
+  notes            String?
+  createdById      String
+  createdBy        User             @relation(fields: [createdById], references: [id])
+  createdAt        DateTime         @default(now())
+
+  @@index([productId])
+  @@index([locationId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model ReorderRule {
+  id          String   @id @default(uuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  minQuantity Float
+  maxQuantity Float
+  createdAt   DateTime @default(now())
+}
